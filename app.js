@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getDatabase, ref, set, push, onValue, child, update } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, child, update, get, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // ===== Firebase Config =====
 const firebaseConfig = {
@@ -7,7 +7,7 @@ const firebaseConfig = {
   authDomain: "free-voice-chat-7e5db.firebaseapp.com",
   databaseURL: "https://free-voice-chat-7e5db-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "free-voice-chat-7e5db",
-  storageBucket: "free-voice-chat-7e5db.appspot.com",
+  storageBucket: "free-voice-chat-7e5db.firebasestorage.app",
   messagingSenderId: "1092180044740",
   appId: "1:1092180044740:web:422408a96e0c5d51f91291"
 };
@@ -35,10 +35,8 @@ const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   localStream = stream;
 
-  // Add self to DB and setup automatic removal on disconnect
-  const userRef = child(roomRef, `users/${userId}`);
-  set(userRef, { speaking: false, muted: false });
-  userRef.onDisconnect().remove(); // <- automatic cleanup
+  // Add self to DB
+  set(child(roomRef, `users/${userId}`), { speaking: false, muted: false });
 
   // Speaking detection
   const ctx = new AudioContext();
@@ -50,7 +48,7 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   function detectVoice() {
     analyser.getByteTimeDomainData(data);
     const speaking = data.some(v => Math.abs(v - 128) > 10) && !muted;
-    update(userRef, { speaking });
+    update(child(roomRef, `users/${userId}`), { speaking });
     requestAnimationFrame(detectVoice);
   }
   detectVoice();
@@ -104,7 +102,7 @@ function renderUsers(users) {
 
     const img = document.createElement("img");
     img.className = "avatar";
-    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
+    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png"; // same avatar for all
     div.appendChild(img);
 
     usersContainer.appendChild(div);
@@ -113,14 +111,14 @@ function renderUsers(users) {
 
 // ===== Create Peer Connection =====
 function createPeerConnection(otherId) {
-  if (peers[otherId]) return;
+  if (peers[otherId]) return; // prevent duplicates
   const pc = new RTCPeerConnection(rtcConfig);
   peers[otherId] = pc;
 
   // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create <audio> element for remote user
+  // Create <audio> element ONLY for remote user
   if (!audioElements[otherId]) {
     const audioEl = document.createElement("audio");
     audioEl.autoplay = true;
@@ -137,7 +135,7 @@ function createPeerConnection(otherId) {
     if (e.candidate) push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
   };
 
-  // Offer/Answer logic
+  // Only one peer creates offer (higher ID)
   if (userId > otherId) {
     pc.createOffer().then(offer => {
       pc.setLocalDescription(offer);
@@ -145,6 +143,7 @@ function createPeerConnection(otherId) {
     });
   }
 
+  // Listen for offer
   onValue(child(roomRef, `offers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       const offer = JSON.parse(snap.val());
@@ -157,15 +156,22 @@ function createPeerConnection(otherId) {
     }
   });
 
+  // Listen for answer
   onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       pc.setRemoteDescription(JSON.parse(snap.val()));
     }
   });
 
+  // Listen for remote ICE
   onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
     snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
   });
 }
 
-// ===== No beforeunload cleanup needed =====
+// ===== Cleanup on leave =====
+window.addEventListener("beforeunload", () => {
+  remove(child(roomRef, `users/${userId}`));
+  // Close all peers
+  for (const id in peers) peers[id].close();
+});
