@@ -175,3 +175,4 @@ window.addEventListener("beforeunload", () => {
   // Close all peers
   for (const id in peers) peers[id].close();
 });
+
