@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getDatabase, ref, set, push, onValue, child, update, get, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, child, update, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // ===== Firebase Config =====
 const firebaseConfig = {
@@ -91,10 +91,29 @@ muteBtn.onclick = () => {
   update(child(roomRef, `users/${userId}`), { muted });
 };
 
-// ===== Render Users =====
+// ===== Render Users (fixed: show self + remote users) =====
 function renderUsers(users) {
   usersContainer.innerHTML = "";
+
+  // Add self first
+  const selfDiv = document.createElement("div");
+  selfDiv.className = "user";
+
+  const selfRing = document.createElement("div");
+  selfRing.className = "ring" + (users[userId]?.speaking ? " active" : "");
+  selfDiv.appendChild(selfRing);
+
+  const selfImg = document.createElement("img");
+  selfImg.className = "avatar";
+  selfImg.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
+  selfDiv.appendChild(selfImg);
+
+  usersContainer.appendChild(selfDiv);
+
+  // Add other users
   for (const id in users) {
+    if (id === userId) continue;
+
     const div = document.createElement("div");
     div.className = "user";
 
@@ -104,7 +123,7 @@ function renderUsers(users) {
 
     const img = document.createElement("img");
     img.className = "avatar";
-    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png"; // same avatar for all
+    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
     div.appendChild(img);
 
     usersContainer.appendChild(div);
@@ -173,7 +192,6 @@ function createPeerConnection(otherId) {
 
 // ===== Cleanup =====
 window.addEventListener("beforeunload", () => {
-  // Close all peer connections locally
   for (const id in peers) peers[id].close();
-  // User removal is now handled automatically via onDisconnect()
+  // User removal handled automatically via onDisconnect()
 });
