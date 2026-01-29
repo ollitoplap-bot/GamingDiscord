@@ -24,11 +24,11 @@ const muteIcon = document.getElementById("muteIcon");
 // ===== State =====
 let localStream;
 let muted = false;
-const userId = Date.now().toString(); // new id on page load
+let userId = Date.now().toString();
 let peers = {};           // RTCPeerConnections keyed by otherId
 let audioElements = {};   // <audio> per peer
 
-// ===== WebRTC =====
+// ===== WebRTC Config =====
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 // ===== Get Microphone =====
@@ -58,19 +58,6 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
     const users = snapshot.val() || {};
     renderUsers(users);
 
-    // Remove disconnected peers
-    for (const id in peers) {
-      if (!users[id]) {
-        peers[id].close();
-        delete peers[id];
-        if (audioElements[id]) {
-          audioElements[id].remove();
-          delete audioElements[id];
-        }
-      }
-    }
-
-    // Create peers for new users
     for (const id in users) {
       if (id !== userId && !peers[id]) {
         createPeerConnection(id);
@@ -91,7 +78,7 @@ muteBtn.onclick = () => {
 
 // ===== Render Users =====
 function renderUsers(users) {
-  usersContainer.innerHTML = "";
+  usersContainer.innerHTML = ""; // clear first
   for (const id in users) {
     const div = document.createElement("div");
     div.className = "user";
@@ -118,7 +105,7 @@ function createPeerConnection(otherId) {
   // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create <audio> element ONLY for remote user
+  // Create <audio> element once
   if (!audioElements[otherId]) {
     const audioEl = document.createElement("audio");
     audioEl.autoplay = true;
@@ -135,7 +122,7 @@ function createPeerConnection(otherId) {
     if (e.candidate) push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
   };
 
-  // Only one peer creates offer (higher ID)
+  // Only one peer makes offer (higher userId)
   if (userId > otherId) {
     pc.createOffer().then(offer => {
       pc.setLocalDescription(offer);
@@ -172,7 +159,4 @@ function createPeerConnection(otherId) {
 // ===== Cleanup on leave =====
 window.addEventListener("beforeunload", () => {
   remove(child(roomRef, `users/${userId}`));
-  // Close all peers
-  for (const id in peers) peers[id].close();
 });
-
