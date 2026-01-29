@@ -1,21 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Free Voice Chat</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Free Voice Chat</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="app">
+    <h1>Free Voice Chat</h1>
+    <div id="users-container"></div>
+    <button id="muteBtn">
+      <img id="muteIcon" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ2FhSl1YBoCZEFlUS7OdLiTwE-dfPCHQYoOA&s" alt="Mic">
+    </button>
+  </div>
 
-<!-- Container for user avatars -->
-<div id="users-container"></div>
-
-<!-- Mute/unmute button -->
-<button id="muteBtn">
-  <img id="muteIcon" src="https://img.icons8.com/material-rounded/48/ffffff/microphone.png"/>
-</button>
-
-<!-- Firebase Modular SDK -->
-<script type="module" src="app.js"></script>
+  <!-- Firebase -->
+  <script type="module" src="app.js"></script>
 </body>
 </html>
