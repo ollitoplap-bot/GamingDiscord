@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getDatabase, ref, set, push, onValue, child, update, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, child, update } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // ===== Firebase Config =====
 const firebaseConfig = {
@@ -14,7 +14,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
-const roomRef = ref(db, 'room1');
+const roomRef = ref(db, "room1");
 
 // ===== UI =====
 const usersContainer = document.getElementById("users-container");
@@ -24,9 +24,9 @@ const muteIcon = document.getElementById("muteIcon");
 // ===== State =====
 let localStream;
 let muted = false;
-const userId = Date.now().toString(); // unique ID per session
-let peers = {};           // RTCPeerConnections keyed by otherId
-let audioElements = {};   // <audio> per remote peer
+const userId = Date.now().toString();
+let peers = {};
+let audioElements = {};
 
 // ===== WebRTC Config =====
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
@@ -35,12 +35,12 @@ const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   localStream = stream;
 
-  // ===== Add self to DB and auto-remove on disconnect =====
+  // Add user to Firebase and auto-remove on disconnect
   const userRef = child(roomRef, `users/${userId}`);
   set(userRef, { speaking: false, muted: false });
   userRef.onDisconnect().remove();
 
-  // ===== Speaking Detection =====
+  // Speaking detection
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
@@ -55,12 +55,12 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   }
   detectVoice();
 
-  // ===== Listen for users =====
-  onValue(child(roomRef, 'users'), snapshot => {
+  // Listen for users
+  onValue(child(roomRef, "users"), snapshot => {
     const users = snapshot.val() || {};
     renderUsers(users);
 
-    // Remove disconnected peers
+    // Cleanup peers for disconnected users
     for (const id in peers) {
       if (!users[id]) {
         peers[id].close();
@@ -72,11 +72,9 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
       }
     }
 
-    // Create new peer connections
+    // Create peers for new users
     for (const id in users) {
-      if (id !== userId && !peers[id]) {
-        createPeerConnection(id);
-      }
+      if (id !== userId && !peers[id]) createPeerConnection(id);
     }
   });
 });
@@ -85,61 +83,52 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
 muteBtn.onclick = () => {
   muted = !muted;
   if (localStream) localStream.getAudioTracks()[0].enabled = !muted;
-  muteIcon.src = muted ?
-    "https://cdn-icons-png.flaticon.com/512/107/107037.png" :
-    "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ2FhSl1YBoCZEFlUS7OdLiTwE-dfPCHQYoOA&s";
+  muteIcon.src = muted
+    ? "https://cdn-icons-png.flaticon.com/512/107/107037.png"
+    : "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ2FhSl1YBoCZEFlUS7OdLiTwE-dfPCHQYoOA&s";
   update(child(roomRef, `users/${userId}`), { muted });
 };
 
-// ===== Render Users (fixed: show self + remote users) =====
+// ===== Render Users =====
 function renderUsers(users) {
   usersContainer.innerHTML = "";
 
-  // Add self first
+  // Render self
   const selfDiv = document.createElement("div");
   selfDiv.className = "user";
-
   const selfRing = document.createElement("div");
   selfRing.className = "ring" + (users[userId]?.speaking ? " active" : "");
   selfDiv.appendChild(selfRing);
-
   const selfImg = document.createElement("img");
   selfImg.className = "avatar";
   selfImg.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
   selfDiv.appendChild(selfImg);
-
   usersContainer.appendChild(selfDiv);
 
-  // Add other users
+  // Render other users
   for (const id in users) {
     if (id === userId) continue;
-
     const div = document.createElement("div");
     div.className = "user";
-
     const ring = document.createElement("div");
     ring.className = "ring" + (users[id].speaking ? " active" : "");
     div.appendChild(ring);
-
     const img = document.createElement("img");
     img.className = "avatar";
     img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
     div.appendChild(img);
-
     usersContainer.appendChild(div);
   }
 }
 
-// ===== Create Peer Connection =====
+// ===== Peer Connection =====
 function createPeerConnection(otherId) {
-  if (peers[otherId]) return; // prevent duplicates
+  if (peers[otherId]) return;
   const pc = new RTCPeerConnection(rtcConfig);
   peers[otherId] = pc;
 
-  // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create <audio> element ONLY for remote peers
   if (!audioElements[otherId]) {
     const audioEl = document.createElement("audio");
     audioEl.autoplay = true;
@@ -153,10 +142,11 @@ function createPeerConnection(otherId) {
   };
 
   pc.onicecandidate = e => {
-    if (e.candidate) push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
+    if (e.candidate)
+      push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
   };
 
-  // Only one peer creates offer (higher ID)
+  // Only one peer makes offer
   if (userId > otherId) {
     pc.createOffer().then(offer => {
       pc.setLocalDescription(offer);
@@ -184,14 +174,13 @@ function createPeerConnection(otherId) {
     }
   });
 
-  // Listen for remote ICE
+  // Listen for ICE candidates
   onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
     snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
   });
 }
 
-// ===== Cleanup =====
+// Cleanup (optional)
 window.addEventListener("beforeunload", () => {
   for (const id in peers) peers[id].close();
-  // User removal handled automatically via onDisconnect()
 });
