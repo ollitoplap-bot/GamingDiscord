@@ -41,11 +41,6 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   // >>> onDisconnect presence removal <<<
   onDisconnect(child(roomRef, `users/${userId}`)).remove();
 
-  // >>> signaling cleanup on disconnect <<<
-  onDisconnect(child(roomRef, `offers`)).update({ [`${userId}_*`]: null });
-  onDisconnect(child(roomRef, `answers`)).update({ [`${userId}_*`]: null });
-  onDisconnect(child(roomRef, `ice`)).update({ [`${userId}_*`]: null });
-
   // Speaking detection
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
@@ -64,6 +59,13 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   // Listen for users
   onValue(child(roomRef, 'users'), snapshot => {
     const users = snapshot.val() || {};
+
+    // >>> SIMPLE ROOM CLEANUP <<<
+    if (Object.keys(users).length === 0) {
+      remove(roomRef);   // delete entire room when empty
+      return;
+    }
+
     renderUsers(users);
 
     for (const id in users) {
