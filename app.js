@@ -1,0 +1,164 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getDatabase, ref, set, push, onValue, child, update, get, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+
+// ===== Firebase Config =====
+const firebaseConfig = {
+  apiKey: "AIzaSyDSVBA8wkrtVhIkZzbEuTGxpD3t4owdRQY",
+  authDomain: "free-voice-chat-7e5db.firebaseapp.com",
+  databaseURL: "https://free-voice-chat-7e5db-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "free-voice-chat-7e5db",
+  storageBucket: "free-voice-chat-7e5db.firebasestorage.app",
+  messagingSenderId: "1092180044740",
+  appId: "1:1092180044740:web:422408a96e0c5d51f91291"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const roomRef = ref(db, 'room1');
+
+// ===== UI =====
+const usersContainer = document.getElementById("users-container");
+const muteBtn = document.getElementById("muteBtn");
+const muteIcon = document.getElementById("muteIcon");
+
+// ===== STATE =====
+let localStream;
+let muted = false;
+let userId = Date.now().toString(); // unique ID
+let peers = {}; // RTCPeerConnections keyed by otherUserId
+let audioElements = {}; // <audio> per peer
+
+// ===== WebRTC Config =====
+const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+// ===== Get Microphone =====
+navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+  localStream = stream;
+
+  // Add self to DB
+  set(child(roomRef, `users/${userId}`), { speaking: false, muted: false, avatar: "https://i.imgur.com/8Km9tLL.png" });
+
+  // Speaking detection
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  src.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
+
+  function detectVoice() {
+    analyser.getByteTimeDomainData(data);
+    const speaking = data.some(v => Math.abs(v - 128) > 10) && !muted;
+    update(child(roomRef, `users/${userId}`), { speaking });
+    requestAnimationFrame(detectVoice);
+  }
+  detectVoice();
+
+  // Listen for all users
+  onValue(child(roomRef, 'users'), snapshot => {
+    const users = snapshot.val() || {};
+    renderUsers(users);
+
+    for (const id in users) {
+      if (id !== userId && !peers[id]) {
+        createPeerConnection(id);
+      }
+    }
+  });
+});
+
+// ===== Mute Button =====
+muteBtn.onclick = () => {
+  muted = !muted;
+  if (localStream) localStream.getAudioTracks()[0].enabled = !muted;
+  muteIcon.src = muted ?
+    "https://img.icons8.com/material-rounded/48/ffffff/microphone-off.png" :
+    "https://img.icons8.com/material-rounded/48/ffffff/microphone.png";
+  update(child(roomRef, `users/${userId}`), { muted });
+};
+
+// ===== Render Users =====
+function renderUsers(users) {
+  usersContainer.innerHTML = "";
+  for (const id in users) {
+    const u = users[id];
+    const div = document.createElement("div");
+    div.className = "user";
+
+    const ring = document.createElement("div");
+    ring.className = "ring" + (u.speaking ? " active" : "");
+    div.appendChild(ring);
+
+    const img = document.createElement("img");
+    img.className = "avatar";
+    img.src = u.avatar || "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
+    div.appendChild(img);
+
+    usersContainer.appendChild(div);
+  }
+}
+
+// ===== Create Peer Connection =====
+function createPeerConnection(otherId) {
+  const pc = new RTCPeerConnection(rtcConfig);
+  peers[otherId] = pc;
+
+  // Add local tracks
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+  // Create <audio> element for remote stream
+  const audioEl = document.createElement("audio");
+  audioEl.autoplay = true;
+  audioElements[otherId] = audioEl;
+  document.body.appendChild(audioEl);
+
+  pc.ontrack = e => {
+    audioEl.srcObject = e.streams[0];
+  };
+
+  // ICE candidates
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
+    }
+  };
+
+  // Offer / answer logic
+  get(child(roomRef, `offers/${otherId}_${userId}`)).then(snap => {
+    if (!snap.exists()) {
+      pc.createOffer().then(offer => {
+        pc.setLocalDescription(offer);
+        set(child(roomRef, `offers/${userId}_${otherId}`), JSON.stringify(offer));
+      });
+    }
+  });
+
+  // Listen for answer
+  onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
+    if (snap.exists() && !pc.currentRemoteDescription) {
+      pc.setRemoteDescription(JSON.parse(snap.val()));
+    }
+  });
+
+  // Listen for remote ICE candidates
+  onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
+    snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
+  });
+
+  // Listen for offers if we are the receiver
+  onValue(child(roomRef, `offers/${otherId}_${userId}`), snap => {
+    if (snap.exists() && !pc.currentRemoteDescription) {
+      const offer = JSON.parse(snap.val());
+      pc.setRemoteDescription(offer).then(() => {
+        pc.createAnswer().then(answer => {
+          pc.setLocalDescription(answer);
+          set(child(roomRef, `answers/${userId}_${otherId}`), JSON.stringify(answer));
+        });
+      });
+    }
+  });
+}
+
+// ===== Cleanup on Leave =====
+window.addEventListener("beforeunload", () => {
+  remove(child(roomRef, `users/${userId}`));
+});
