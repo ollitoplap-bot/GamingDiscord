@@ -21,12 +21,12 @@ const usersContainer = document.getElementById("users-container");
 const muteBtn = document.getElementById("muteBtn");
 const muteIcon = document.getElementById("muteIcon");
 
-// ===== STATE =====
+// ===== State =====
 let localStream;
 let muted = false;
-let userId = Date.now().toString(); // unique ID
-let peers = {}; // RTCPeerConnections keyed by otherUserId
-let audioElements = {}; // <audio> per peer
+let userId = Date.now().toString();
+let peers = {};           // RTCPeerConnections keyed by otherId
+let audioElements = {};   // <audio> per peer
 
 // ===== WebRTC Config =====
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
@@ -36,7 +36,7 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   localStream = stream;
 
   // Add self to DB
-  set(child(roomRef, `users/${userId}`), { speaking: false, muted: false, avatar: "https://i.imgur.com/8Km9tLL.png" });
+  set(child(roomRef, `users/${userId}`), { speaking: false, muted: false });
 
   // Speaking detection
   const ctx = new AudioContext();
@@ -53,7 +53,7 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   }
   detectVoice();
 
-  // Listen for all users
+  // Listen for users
   onValue(child(roomRef, 'users'), snapshot => {
     const users = snapshot.val() || {};
     renderUsers(users);
@@ -71,8 +71,8 @@ muteBtn.onclick = () => {
   muted = !muted;
   if (localStream) localStream.getAudioTracks()[0].enabled = !muted;
   muteIcon.src = muted ?
-    "https://img.icons8.com/material-rounded/48/ffffff/microphone-off.png" :
-    "https://img.icons8.com/material-rounded/48/ffffff/microphone.png";
+    "https://cdn-icons-png.flaticon.com/512/107/107037.png" :
+    "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ2FhSl1YBoCZEFlUS7OdLiTwE-dfPCHQYoOA&s";
   update(child(roomRef, `users/${userId}`), { muted });
 };
 
@@ -90,7 +90,7 @@ function renderUsers(users) {
 
     const img = document.createElement("img");
     img.className = "avatar";
-    img.src = u.avatar || "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
+    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png"; // same avatar for all
     div.appendChild(img);
 
     usersContainer.appendChild(div);
@@ -105,9 +105,10 @@ function createPeerConnection(otherId) {
   // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create <audio> element for remote stream
+  // Create audio element
   const audioEl = document.createElement("audio");
   audioEl.autoplay = true;
+  audioEl.volume = 1;
   audioElements[otherId] = audioEl;
   document.body.appendChild(audioEl);
 
@@ -115,14 +116,13 @@ function createPeerConnection(otherId) {
     audioEl.srcObject = e.streams[0];
   };
 
-  // ICE candidates
   pc.onicecandidate = e => {
     if (e.candidate) {
       push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
     }
   };
 
-  // Offer / answer logic
+  // Offer / answer simplified
   get(child(roomRef, `offers/${otherId}_${userId}`)).then(snap => {
     if (!snap.exists()) {
       pc.createOffer().then(offer => {
@@ -132,19 +132,16 @@ function createPeerConnection(otherId) {
     }
   });
 
-  // Listen for answer
   onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       pc.setRemoteDescription(JSON.parse(snap.val()));
     }
   });
 
-  // Listen for remote ICE candidates
   onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
     snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
   });
 
-  // Listen for offers if we are the receiver
   onValue(child(roomRef, `offers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       const offer = JSON.parse(snap.val());
@@ -158,7 +155,7 @@ function createPeerConnection(otherId) {
   });
 }
 
-// ===== Cleanup on Leave =====
+// ===== Cleanup on leave =====
 window.addEventListener("beforeunload", () => {
   remove(child(roomRef, `users/${userId}`));
 });
