@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getDatabase, ref, set, push, onValue, child, update, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, child, update } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // ===== Firebase Config =====
 const firebaseConfig = {
@@ -24,10 +24,9 @@ const muteIcon = document.getElementById("muteIcon");
 // ===== State =====
 let localStream;
 let muted = false;
-const userId = Date.now().toString();
-let peers = {};
-let audioElements = {};
-let iceListeners = {}; // Track which ICE paths we are listening to
+const userId = Date.now().toString(); // new id on page load
+let peers = {};           // RTCPeerConnections keyed by otherId
+let audioElements = {};   // <audio> per peer
 
 // ===== WebRTC =====
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
@@ -36,12 +35,12 @@ const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   localStream = stream;
 
-  // ===== Add self to DB =====
+  // Add self to DB and setup automatic removal on disconnect
   const userRef = child(roomRef, `users/${userId}`);
   set(userRef, { speaking: false, muted: false });
-  userRef.onDisconnect().remove(); // auto-remove user on disconnect
+  userRef.onDisconnect().remove(); // <- automatic cleanup
 
-  // ===== Speaking detection =====
+  // Speaking detection
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
@@ -56,7 +55,7 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   }
   detectVoice();
 
-  // ===== Listen for users =====
+  // Listen for users
   onValue(child(roomRef, 'users'), snapshot => {
     const users = snapshot.val() || {};
     renderUsers(users);
@@ -134,58 +133,39 @@ function createPeerConnection(otherId) {
     audioElements[otherId].srcObject = e.streams[0];
   };
 
-  // ===== ICE candidates =====
   pc.onicecandidate = e => {
-    if (e.candidate) {
-      const iceRef = push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
-      iceRef.onDisconnect().remove();
-    }
+    if (e.candidate) push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
   };
 
-  // ===== Offer =====
+  // Offer/Answer logic
   if (userId > otherId) {
     pc.createOffer().then(offer => {
-      const offerRef = child(roomRef, `offers/${userId}_${otherId}`);
-      set(offerRef, JSON.stringify(offer));
-      offerRef.onDisconnect().remove();
       pc.setLocalDescription(offer);
+      set(child(roomRef, `offers/${userId}_${otherId}`), JSON.stringify(offer));
     });
   }
 
-  // ===== Listen for Offer =====
   onValue(child(roomRef, `offers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       const offer = JSON.parse(snap.val());
       pc.setRemoteDescription(offer).then(() => {
-        remove(child(roomRef, `offers/${otherId}_${userId}`));
-
         pc.createAnswer().then(answer => {
-          const answerRef = child(roomRef, `answers/${userId}_${otherId}`);
-          set(answerRef, JSON.stringify(answer));
-          answerRef.onDisconnect().remove();
           pc.setLocalDescription(answer);
+          set(child(roomRef, `answers/${userId}_${otherId}`), JSON.stringify(answer));
         });
       });
     }
   });
 
-  // ===== Listen for Answer =====
   onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       pc.setRemoteDescription(JSON.parse(snap.val()));
-      remove(child(roomRef, `answers/${otherId}_${userId}`));
     }
   });
 
-  // ===== Optimized Remote ICE Listener =====
-  const icePath = `ice/${otherId}_${userId}`;
-  if (!iceListeners[icePath]) {
-    iceListeners[icePath] = true;
-    onValue(child(roomRef, icePath), snap => {
-      snap.forEach(c => {
-        pc.addIceCandidate(JSON.parse(c.val()));
-        remove(child(roomRef, `${icePath}/${c.key}`)); // remove after applying
-      });
-    });
-  }
+  onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
+    snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
+  });
 }
+
+// ===== No beforeunload cleanup needed =====
