@@ -41,6 +41,11 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   // >>> onDisconnect presence removal <<<
   onDisconnect(child(roomRef, `users/${userId}`)).remove();
 
+  // >>> signaling cleanup on disconnect <<<
+  onDisconnect(child(roomRef, `offers`)).update({ [`${userId}_*`]: null });
+  onDisconnect(child(roomRef, `answers`)).update({ [`${userId}_*`]: null });
+  onDisconnect(child(roomRef, `ice`)).update({ [`${userId}_*`]: null });
+
   // Speaking detection
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
