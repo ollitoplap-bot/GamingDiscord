@@ -78,14 +78,13 @@ muteBtn.onclick = () => {
 
 // ===== Render Users =====
 function renderUsers(users) {
-  usersContainer.innerHTML = "";
+  usersContainer.innerHTML = ""; // clear first
   for (const id in users) {
-    const u = users[id];
     const div = document.createElement("div");
     div.className = "user";
 
     const ring = document.createElement("div");
-    ring.className = "ring" + (u.speaking ? " active" : "");
+    ring.className = "ring" + (users[id].speaking ? " active" : "");
     div.appendChild(ring);
 
     const img = document.createElement("img");
@@ -99,49 +98,39 @@ function renderUsers(users) {
 
 // ===== Create Peer Connection =====
 function createPeerConnection(otherId) {
+  if (peers[otherId]) return; // prevent duplicates
   const pc = new RTCPeerConnection(rtcConfig);
   peers[otherId] = pc;
 
   // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create audio element
-  const audioEl = document.createElement("audio");
-  audioEl.autoplay = true;
-  audioEl.volume = 1;
-  audioElements[otherId] = audioEl;
-  document.body.appendChild(audioEl);
+  // Create <audio> element once
+  if (!audioElements[otherId]) {
+    const audioEl = document.createElement("audio");
+    audioEl.autoplay = true;
+    audioEl.volume = 1;
+    audioElements[otherId] = audioEl;
+    document.body.appendChild(audioEl);
+  }
 
   pc.ontrack = e => {
-    audioEl.srcObject = e.streams[0];
+    audioElements[otherId].srcObject = e.streams[0];
   };
 
   pc.onicecandidate = e => {
-    if (e.candidate) {
-      push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
-    }
+    if (e.candidate) push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
   };
 
-  // Offer / answer simplified
-  get(child(roomRef, `offers/${otherId}_${userId}`)).then(snap => {
-    if (!snap.exists()) {
-      pc.createOffer().then(offer => {
-        pc.setLocalDescription(offer);
-        set(child(roomRef, `offers/${userId}_${otherId}`), JSON.stringify(offer));
-      });
-    }
-  });
+  // Only one peer makes offer (higher userId)
+  if (userId > otherId) {
+    pc.createOffer().then(offer => {
+      pc.setLocalDescription(offer);
+      set(child(roomRef, `offers/${userId}_${otherId}`), JSON.stringify(offer));
+    });
+  }
 
-  onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
-    if (snap.exists() && !pc.currentRemoteDescription) {
-      pc.setRemoteDescription(JSON.parse(snap.val()));
-    }
-  });
-
-  onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
-    snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
-  });
-
+  // Listen for offer
   onValue(child(roomRef, `offers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       const offer = JSON.parse(snap.val());
@@ -152,6 +141,18 @@ function createPeerConnection(otherId) {
         });
       });
     }
+  });
+
+  // Listen for answer
+  onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
+    if (snap.exists() && !pc.currentRemoteDescription) {
+      pc.setRemoteDescription(JSON.parse(snap.val()));
+    }
+  });
+
+  // Listen for remote ICE
+  onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
+    snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
   });
 }
 
