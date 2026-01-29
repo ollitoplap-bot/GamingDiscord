@@ -24,21 +24,23 @@ const muteIcon = document.getElementById("muteIcon");
 // ===== State =====
 let localStream;
 let muted = false;
-const userId = Date.now().toString(); // new id on page load
+const userId = Date.now().toString(); // unique ID per session
 let peers = {};           // RTCPeerConnections keyed by otherId
-let audioElements = {};   // <audio> per peer
+let audioElements = {};   // <audio> per remote peer
 
-// ===== WebRTC =====
+// ===== WebRTC Config =====
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 // ===== Get Microphone =====
 navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   localStream = stream;
 
-  // Add self to DB
-  set(child(roomRef, `users/${userId}`), { speaking: false, muted: false });
+  // ===== Add self to DB and auto-remove on disconnect =====
+  const userRef = child(roomRef, `users/${userId}`);
+  set(userRef, { speaking: false, muted: false });
+  userRef.onDisconnect().remove();
 
-  // Speaking detection
+  // ===== Speaking Detection =====
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
@@ -48,12 +50,12 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   function detectVoice() {
     analyser.getByteTimeDomainData(data);
     const speaking = data.some(v => Math.abs(v - 128) > 10) && !muted;
-    update(child(roomRef, `users/${userId}`), { speaking });
+    update(userRef, { speaking });
     requestAnimationFrame(detectVoice);
   }
   detectVoice();
 
-  // Listen for users
+  // ===== Listen for users =====
   onValue(child(roomRef, 'users'), snapshot => {
     const users = snapshot.val() || {};
     renderUsers(users);
@@ -70,7 +72,7 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
       }
     }
 
-    // Create peers for new users
+    // Create new peer connections
     for (const id in users) {
       if (id !== userId && !peers[id]) {
         createPeerConnection(id);
@@ -118,7 +120,7 @@ function createPeerConnection(otherId) {
   // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create <audio> element ONLY for remote user
+  // Create <audio> element ONLY for remote peers
   if (!audioElements[otherId]) {
     const audioEl = document.createElement("audio");
     audioEl.autoplay = true;
@@ -169,9 +171,9 @@ function createPeerConnection(otherId) {
   });
 }
 
-// ===== Cleanup on leave =====
+// ===== Cleanup =====
 window.addEventListener("beforeunload", () => {
-  remove(child(roomRef, `users/${userId}`));
-  // Close all peers
+  // Close all peer connections locally
   for (const id in peers) peers[id].close();
+  // User removal is now handled automatically via onDisconnect()
 });
