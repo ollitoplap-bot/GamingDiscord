@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getDatabase, ref, set, push, onValue, child, update, get, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, child, update, get, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // ===== Firebase Config =====
 const firebaseConfig = {
@@ -37,6 +37,9 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
 
   // Add self to DB
   set(child(roomRef, `users/${userId}`), { speaking: false, muted: false });
+
+  // >>> onDisconnect presence removal <<<
+  onDisconnect(child(roomRef, `users/${userId}`)).remove();
 
   // Speaking detection
   const ctx = new AudioContext();
