@@ -17,14 +17,13 @@ body {
 
 .user {
   position: relative;
-  width: 112px;
-  height: 112px;
+  width: 100px;
+  height: 100px;
   text-align: center;
 }
 
 .user img.avatar {
-  width: 112px;
-  height: 112px;
+  width: 100%;
   border-radius: 50%;
   position: relative;
   z-index: 2;
@@ -58,5 +57,3 @@ button#muteBtn img {
   width: 32px;
   height: 32px;
 }
-
-
