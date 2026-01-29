@@ -23,7 +23,8 @@ body {
 }
 
 .user img.avatar {
-  width: 100%;
+  width: 108px;
+  height: 108px;
   border-radius: 50%;
   position: relative;
   z-index: 2;
@@ -57,3 +58,4 @@ button#muteBtn img {
   width: 32px;
   height: 32px;
 }
+
