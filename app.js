@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getDatabase, ref, set, push, onValue, child, update, get, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, child, update, remove } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // ===== Firebase Config =====
 const firebaseConfig = {
@@ -7,7 +7,7 @@ const firebaseConfig = {
   authDomain: "free-voice-chat-7e5db.firebaseapp.com",
   databaseURL: "https://free-voice-chat-7e5db-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "free-voice-chat-7e5db",
-  storageBucket: "free-voice-chat-7e5db.firebasestorage.app",
+  storageBucket: "free-voice-chat-7e5db.appspot.com",
   messagingSenderId: "1092180044740",
   appId: "1:1092180044740:web:422408a96e0c5d51f91291"
 };
@@ -24,9 +24,10 @@ const muteIcon = document.getElementById("muteIcon");
 // ===== State =====
 let localStream;
 let muted = false;
-const userId = Date.now().toString(); // new id on page load
-let peers = {};           // RTCPeerConnections keyed by otherId
-let audioElements = {};   // <audio> per peer
+const userId = Date.now().toString();
+let peers = {};
+let audioElements = {};
+let iceListeners = {}; // Track which ICE paths we are listening to
 
 // ===== WebRTC =====
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
@@ -35,10 +36,12 @@ const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   localStream = stream;
 
-  // Add self to DB
-  set(child(roomRef, `users/${userId}`), { speaking: false, muted: false });
+  // ===== Add self to DB =====
+  const userRef = child(roomRef, `users/${userId}`);
+  set(userRef, { speaking: false, muted: false });
+  userRef.onDisconnect().remove(); // auto-remove user on disconnect
 
-  // Speaking detection
+  // ===== Speaking detection =====
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
@@ -48,12 +51,12 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
   function detectVoice() {
     analyser.getByteTimeDomainData(data);
     const speaking = data.some(v => Math.abs(v - 128) > 10) && !muted;
-    update(child(roomRef, `users/${userId}`), { speaking });
+    update(userRef, { speaking });
     requestAnimationFrame(detectVoice);
   }
   detectVoice();
 
-  // Listen for users
+  // ===== Listen for users =====
   onValue(child(roomRef, 'users'), snapshot => {
     const users = snapshot.val() || {};
     renderUsers(users);
@@ -102,7 +105,7 @@ function renderUsers(users) {
 
     const img = document.createElement("img");
     img.className = "avatar";
-    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png"; // same avatar for all
+    img.src = "https://better-default-discord.netlify.app/Icons/Gradient-Violet.png";
     div.appendChild(img);
 
     usersContainer.appendChild(div);
@@ -111,14 +114,14 @@ function renderUsers(users) {
 
 // ===== Create Peer Connection =====
 function createPeerConnection(otherId) {
-  if (peers[otherId]) return; // prevent duplicates
+  if (peers[otherId]) return;
   const pc = new RTCPeerConnection(rtcConfig);
   peers[otherId] = pc;
 
   // Add local tracks
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  // Create <audio> element ONLY for remote user
+  // Create <audio> element for remote user
   if (!audioElements[otherId]) {
     const audioEl = document.createElement("audio");
     audioEl.autoplay = true;
@@ -131,47 +134,58 @@ function createPeerConnection(otherId) {
     audioElements[otherId].srcObject = e.streams[0];
   };
 
+  // ===== ICE candidates =====
   pc.onicecandidate = e => {
-    if (e.candidate) push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
+    if (e.candidate) {
+      const iceRef = push(child(roomRef, `ice/${userId}_${otherId}`), JSON.stringify(e.candidate));
+      iceRef.onDisconnect().remove();
+    }
   };
 
-  // Only one peer creates offer (higher ID)
+  // ===== Offer =====
   if (userId > otherId) {
     pc.createOffer().then(offer => {
+      const offerRef = child(roomRef, `offers/${userId}_${otherId}`);
+      set(offerRef, JSON.stringify(offer));
+      offerRef.onDisconnect().remove();
       pc.setLocalDescription(offer);
-      set(child(roomRef, `offers/${userId}_${otherId}`), JSON.stringify(offer));
     });
   }
 
-  // Listen for offer
+  // ===== Listen for Offer =====
   onValue(child(roomRef, `offers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       const offer = JSON.parse(snap.val());
       pc.setRemoteDescription(offer).then(() => {
+        remove(child(roomRef, `offers/${otherId}_${userId}`));
+
         pc.createAnswer().then(answer => {
+          const answerRef = child(roomRef, `answers/${userId}_${otherId}`);
+          set(answerRef, JSON.stringify(answer));
+          answerRef.onDisconnect().remove();
           pc.setLocalDescription(answer);
-          set(child(roomRef, `answers/${userId}_${otherId}`), JSON.stringify(answer));
         });
       });
     }
   });
 
-  // Listen for answer
+  // ===== Listen for Answer =====
   onValue(child(roomRef, `answers/${otherId}_${userId}`), snap => {
     if (snap.exists() && !pc.currentRemoteDescription) {
       pc.setRemoteDescription(JSON.parse(snap.val()));
+      remove(child(roomRef, `answers/${otherId}_${userId}`));
     }
   });
 
-  // Listen for remote ICE
-  onValue(child(roomRef, `ice/${otherId}_${userId}`), snap => {
-    snap.forEach(c => pc.addIceCandidate(JSON.parse(c.val())));
-  });
+  // ===== Optimized Remote ICE Listener =====
+  const icePath = `ice/${otherId}_${userId}`;
+  if (!iceListeners[icePath]) {
+    iceListeners[icePath] = true;
+    onValue(child(roomRef, icePath), snap => {
+      snap.forEach(c => {
+        pc.addIceCandidate(JSON.parse(c.val()));
+        remove(child(roomRef, `${icePath}/${c.key}`)); // remove after applying
+      });
+    });
+  }
 }
-
-// ===== Cleanup on leave =====
-window.addEventListener("beforeunload", () => {
-  remove(child(roomRef, `users/${userId}`));
-  // Close all peers
-  for (const id in peers) peers[id].close();
-});
